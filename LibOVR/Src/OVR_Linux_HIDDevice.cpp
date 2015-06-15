@@ -30,7 +30,7 @@ limitations under the License.
 #include <errno.h>
 #include <linux/hidraw.h>
 #include "OVR_HIDDeviceImpl.h"
-#include "libusb-1.0/libusb.h"
+#include "hidapi.h"
 
 //http://kernel.opensuse.org/cgit/kernel/tree/samples/hidraw/hid-example.c
 /*
@@ -42,6 +42,25 @@ limitations under the License.
 //#define HIDIOCSFEATURE(len)    _IOC(_IOC_WRITE|_IOC_READ, 'H', 0x06, len)
 //#define HIDIOCGFEATURE(len)    _IOC(_IOC_WRITE|_IOC_READ, 'H', 0x07, len)
 #endif
+
+static const int CONTROL_REQUEST_TYPE_IN = LIBUSB_ENDPOINT_IN | LIBUSB_REQUEST_TYPE_CLASS | LIBUSB_RECIPIENT_INTERFACE;
+static const int CONTROL_REQUEST_TYPE_OUT = LIBUSB_ENDPOINT_OUT | LIBUSB_REQUEST_TYPE_CLASS | LIBUSB_RECIPIENT_INTERFACE;
+
+// From the HID spec:
+
+static const int HID_GET_REPORT = 0x01;
+static const int HID_SET_REPORT = 0x09;
+static const int HID_REPORT_TYPE_INPUT = 0x01;
+static const int HID_REPORT_TYPE_OUTPUT = 0x02;
+static const int HID_REPORT_TYPE_FEATURE = 0x03;
+
+// With firmware support, transfers can be > the endpoint's max packet size.
+
+static const int MAX_CONTROL_IN_TRANSFER_SIZE = 2;
+static const int MAX_CONTROL_OUT_TRANSFER_SIZE = 2;
+
+static const int INTERFACE_NUMBER = 0;
+static const int TIMEOUT_MS = 5000;
 
 namespace OVR { namespace Linux {
 
@@ -67,6 +86,8 @@ HIDDeviceManager::~HIDDeviceManager()
 //-----------------------------------------------------------------------------
 bool HIDDeviceManager::initializeManager()
 {
+	hid_init();
+
     if (HIDMonitor)
     {
         return true;
@@ -185,8 +206,12 @@ bool HIDDeviceManager::getIntProperty(udev_device* device,
 }
 
 //-----------------------------------------------------------------------------
-bool HIDDeviceManager::initVendorProductVersion(udev_device* device, HIDDeviceDesc* pDevDesc)
+bool HIDDeviceManager::initVendorProductVersion(hid_device_info* device, HIDDeviceDesc* pDevDesc)
 {
+	pDevDesc->VendorId = device->vendor_id;
+	pDevDesc->ProductId = device->product_id;
+	pDevDesc->VersionNumber = device->release_number;
+/*
     SInt32 result;
     if (getIntProperty(device, "idVendor", &result))
         pDevDesc->VendorId = result;
@@ -202,6 +227,7 @@ bool HIDDeviceManager::initVendorProductVersion(udev_device* device, HIDDeviceDe
         pDevDesc->VersionNumber = result;
     else
         return false;
+ */
 
     return true;
 }
@@ -227,71 +253,46 @@ bool HIDDeviceManager::getStringProperty(udev_device* device,
 //-----------------------------------------------------------------------------
 bool HIDDeviceManager::Enumerate(HIDEnumerateVisitor* enumVisitor)
 {
-    
     if (!initializeManager())
     {
         return false;
     }
+    // Enumerate and print the HID devices on the system
+	struct hid_device_info *devs, *cur_dev;
 
-	// Get a list of hid devices
-    udev_enumerate* devices = udev_enumerate_new(UdevInstance);
-    udev_enumerate_add_match_subsystem(devices, "hidraw");
-    udev_enumerate_scan_devices(devices);
+	devs = hid_enumerate(0x0, 0x0);
+	cur_dev = devs;
+	while (cur_dev) {
 
-    udev_list_entry* entry = udev_enumerate_get_list_entry(devices);
+		// Check the VID/PID for a match
+		if(enumVisitor->MatchVendorProduct(cur_dev->vendor_id, cur_dev->product_id))
+		{
+			HIDDeviceDesc devDesc;
 
-    // Search each device for the matching vid/pid
-    while (entry != NULL)
-    {
-        // Get the device file name
-        const char* sysfs_path = udev_list_entry_get_name(entry);
-        udev_device* hid;  // The device's HID udev node.
-        hid = udev_device_new_from_syspath(UdevInstance, sysfs_path);
-        const char* dev_path = udev_device_get_devnode(hid);
+			getFullDesc(cur_dev, &devDesc);
 
-        // Get the USB device
-        hid = udev_device_get_parent_with_subsystem_devtype(hid, "usb", "usb_device");
-        if (hid)
-        {
-            HIDDeviceDesc devDesc;
+			// Look for the device to check if it is already opened.
+			Ptr<DeviceCreateDesc> existingDevice = DevManager->FindHIDDevice(devDesc, true);
+			// if device exists and it is opened then most likely the device open()
+			// will fail; therefore, we just set Enumerated to 'true' and continue.
+			if (existingDevice && existingDevice->pDevice)
+			{
+				existingDevice->Enumerated = true;
+			}
+			else
+			{
+				//libusb does not support 'minimal'
 
-            // Check the VID/PID for a match
-            if (dev_path &&
-                initVendorProductVersion(hid, &devDesc) &&
-                enumVisitor->MatchVendorProduct(devDesc.VendorId, devDesc.ProductId))
-            {
-                devDesc.Path = dev_path;
-                getFullDesc(hid, &devDesc);
+				Linux::HIDDevice device(this);
+				device.openDevice(dev_path);
+				enumVisitor->Visit(device, devDesc);
+				device.closeDevice(false);
+			}
 
-                // Look for the device to check if it is already opened.
-                Ptr<DeviceCreateDesc> existingDevice = DevManager->FindHIDDevice(devDesc, true);
-                // if device exists and it is opened then most likely the device open()
-                // will fail; therefore, we just set Enumerated to 'true' and continue.
-                if (existingDevice && existingDevice->pDevice)
-                {
-                    existingDevice->Enumerated = true;
-                }
-                else
-                {   // open the device temporarily for startup communication
-                    int device_handle = open(dev_path, O_RDWR);
-                    if (device_handle >= 0)
-                    {
-                        // Construct minimal device that the visitor callback can get feature reports from
-                        Linux::HIDDevice device(this, device_handle);
-                        enumVisitor->Visit(device, devDesc);
+		cur_dev = cur_dev->next;
+	}
 
-                        close(device_handle);  // close the file handle
-                    }
-                }
-            }
-
-            udev_device_unref(hid);
-            entry = udev_list_entry_get_next(entry);
-        }
-    }
-
-	// Free the enumerator and udev objects
-    udev_enumerate_unref(devices);
+	hid_free_enumeration(devs);
 
     return true;
 }
@@ -448,18 +449,9 @@ void HIDDeviceManager::OnEvent(int i, int fd)
 //                           Linux::HIDDevice
 //=============================================================================
 HIDDevice::HIDDevice(HIDDeviceManager* manager)
- :  InMinimalMode(false), HIDManager(manager), usb_dev_handle(0)
+ :  InMinimalMode(false), HIDManager(manager)
 {
-    DeviceHandle = -1;
-}
-    
-//-----------------------------------------------------------------------------
-// This is a minimal constructor used during enumeration for us to pass
-// a HIDDevice to the visit function (so that it can query feature reports).
-HIDDevice::HIDDevice(HIDDeviceManager* manager, const char* dev_path)
-:   InMinimalMode(true), HIDManager(manager), DeviceHandle(device_handle), usb_dev_handle(0)
-{
-
+    DeviceHandle = NULL;
 }
 
 //-----------------------------------------------------------------------------
@@ -499,61 +491,8 @@ bool HIDDevice::initInfo()
     // Device must have been successfully opened.
     OVR_ASSERT(DeviceHandle >= 0);
 
-    int desc_size = 0;
-    hidraw_report_descriptor rpt_desc;
-    memset(&rpt_desc, 0, sizeof(rpt_desc));
-
-    // get report descriptor size
-    int r = ioctl(DeviceHandle, HIDIOCGRDESCSIZE, &desc_size);
-    if (r < 0)
-    {
-        OVR_ASSERT_LOG(false, ("Failed to get report descriptor size."));
-        return false;
-    }
-
-    // Get the report descriptor
-    rpt_desc.size = desc_size;
-    r = ioctl(DeviceHandle, HIDIOCGRDESC, &rpt_desc);
-    if (r < 0)
-    {
-        OVR_ASSERT_LOG(false, ("Failed to get report descriptor."));
-        return false;
-    }
-    
-    /*
     // Get report lengths.
-    SInt32 bufferLength;
-    bool getResult = HIDManager->getIntProperty(Device, CFSTR(kIOHIDMaxInputReportSizeKey), &bufferLength);
-    OVR_ASSERT(getResult);
-    InputReportBufferLength = (UInt16) bufferLength;
-
-    getResult = HIDManager->getIntProperty(Device, CFSTR(kIOHIDMaxOutputReportSizeKey), &bufferLength);
-    OVR_ASSERT(getResult);
-    OutputReportBufferLength = (UInt16) bufferLength;
-
-    getResult = HIDManager->getIntProperty(Device, CFSTR(kIOHIDMaxFeatureReportSizeKey), &bufferLength);
-    OVR_ASSERT(getResult);
-    FeatureReportBufferLength = (UInt16) bufferLength;
-    
-    
-    if (ReadBufferSize < InputReportBufferLength)
-    {
-        OVR_ASSERT_LOG(false, ("Input report buffer length is bigger than read buffer."));
-        return false;
-    }
-    
-    // Get device desc.
-    if (!HIDManager->getFullDesc(Device, &DevDesc))
-    {
-        OVR_ASSERT_LOG(false, ("Failed to get device desc while initializing device."));
-        return false;
-    }
-    
-    return true;
-    */
-
-    // Get report lengths.
-// TODO: hard-coded for now.  Need to interpret these values from the report descriptor
+    // TODO: hard-coded for now.  Need to interpret these values from the report descriptor
     InputReportBufferLength = 62;
     OutputReportBufferLength = 0;
     FeatureReportBufferLength = 69;
@@ -567,16 +506,18 @@ bool HIDDevice::initInfo()
     return true;
 }
 
-void HIDDevice::CloseUSB()
+//-----------------------------------------------------------------------------
+bool HIDDevice::openDevice(const char* device_path)
 {
-	libusb_release_interface(usb_dev_handle, 0); //release the claimed interface
-	libusb_close(usb_dev_handle); //close the device we opened
-	libusb_exit(HIDDevice::usb_ctx); //needs to be called to end the
-}
+    // First fill out the device descriptor
+    if (!HIDManager->GetDescriptorFromPath(device_path, &DevDesc))
+    {
+        return false;
+    }
 
-void HIDDevice::OpenUSB()
-{
-	libusb_device **devs; //pointer to pointer of device, used to retrieve a list of devices
+    // Now open the device (using libusb)
+
+    libusb_device **devs; //pointer to pointer of device, used to retrieve a list of devices
 
 	int r; //for return values
 	ssize_t cnt; //holding number of devices in list
@@ -585,7 +526,7 @@ void HIDDevice::OpenUSB()
 	{
 		r = libusb_init(&usb_ctx); //initialize the library for the session we just declared
 		if(r < 0) {
-			return;
+			return false;
 		}
 	}
 
@@ -593,7 +534,7 @@ void HIDDevice::OpenUSB()
 
 	cnt = libusb_get_device_list(usb_ctx, &devs); //get the list of devices
 	if(cnt < 0) {
-		return;
+		return false;
 	}
 
 	struct libusb_device *found = NULL;
@@ -613,7 +554,7 @@ void HIDDevice::OpenUSB()
 	}
 
 	if (found) {
-		r = libusb_open(found, &usb_dev_handle);
+		r = libusb_open(found, &DeviceHandle);
 		if (r < 0)
 		{
 			OVR_DEBUG_LOG(("libusb: Cannot open device %s", libusb_error_name(r)));
@@ -622,112 +563,54 @@ void HIDDevice::OpenUSB()
 	{
 		OVR_DEBUG_LOG(("libusb: Could not find device"));
 		libusb_free_device_list(devs, 1); //free the list, unref the devices in it
-		return;
+		return false;
 	}
-
 
 	libusb_free_device_list(devs, 1); //free the list, unref the devices in it
 
 
 	int actual; //used to find out how many bytes were written
-	if(libusb_kernel_driver_active(usb_dev_handle, 0) == 1)
+	if(libusb_kernel_driver_active(DeviceHandle, 0) == 1)
 	{
 		OVR_DEBUG_LOG(("libusb: Kernel Driver Attached - kicking it off..."));
 
 		//find out if kernel driver is attached
-		if(libusb_detach_kernel_driver(usb_dev_handle, 0) == 0) //detach it
+		if(libusb_detach_kernel_driver(DeviceHandle, 0) == 0) //detach it
 		{
 
 		}
 	}
-	r = libusb_claim_interface(usb_dev_handle, 0); //claim interface 0 (the first) of device (mine had jsut 1)
+
+	r = libusb_claim_interface(DeviceHandle, 0); //claim interface 0 (the first) of device (mine had jsut 1)
 	if(r < 0) {
-		return;
+		return true;
 	}
 
-}
-
-//http://stackoverflow.com/questions/30519625/remove-input-driver-bound-to-the-hid-interface/30661555#30661555
-
-int HIDDevice::usb_get_feature_report(libusb_device_handle *dev, unsigned char *data, size_t length)
-{
-	if(!usb_ctx)
-	{
-		OpenUSB();
-	}
-
-	if(!usb_dev_handle)
-	{
-		return -1;
-	}
-
-    int res = -1;
-    int skipped_report_id = 0;
-    int report_number = data[0];
-
-    if (report_number == 0x0) {
-        /* Offset the return buffer by 1, so that the report ID
-           will remain in byte 0. */
-        data++;
-        length--;
-        skipped_report_id = 1;
-    }
-    res = libusb_control_transfer(
-    	dev,
-        LIBUSB_REQUEST_TYPE_CLASS|LIBUSB_RECIPIENT_INTERFACE|LIBUSB_ENDPOINT_IN,
-        0x01/*HID get_report*/,
-        0,
-        (3/*HID feature*/ << 8) | report_number,
-        (unsigned char *)data, length,
-        1000);
-
-    if (res < 0)
-        return -1;
-
-    if (skipped_report_id)
-        res++;
-
-    return res;
-}
-
-//-----------------------------------------------------------------------------
-bool HIDDevice::openDevice(const char* device_path)
-{
-    // First fill out the device descriptor
-    if (!HIDManager->GetDescriptorFromPath(device_path, &DevDesc))
-    {
-        return false;
-    }
-
-    // Now open the device
-
-    DeviceHandle = open(device_path, O_RDWR);
-    if (DeviceHandle < 0)
-    {
-        OVR_DEBUG_LOG(("Failed 'CreateHIDFile' while opening device, error = 0x%X.", errno));
-        DeviceHandle = -1;
-        return false;
-    }
 
     // fill out some values from the feature report descriptor
     if (!initInfo())
     {
         OVR_ASSERT_LOG(false, ("Failed to get HIDDevice info."));
 
-        close(DeviceHandle);
-        DeviceHandle = -1;
+    	libusb_release_interface(DeviceHandle, 0); //release the claimed interface
+    	libusb_close(DeviceHandle); //close the device we opened
+    	//libusb_exit(HIDDevice::usb_ctx); //needs to be called to end the
+        DeviceHandle = NULL;
         return false;
     }
-
+/*
     // Add the device to the polling list
     if (!HIDManager->DevManager->pThread->AddSelectFd(this, DeviceHandle))
     {
         OVR_ASSERT_LOG(false, ("Failed to initialize polling for HIDDevice."));
 
-        close(DeviceHandle);
-        DeviceHandle = -1;
+    	libusb_release_interface(usb_dev_handle, 0); //release the claimed interface
+    	libusb_close(usb_dev_handle); //close the device we opened
+    	//libusb_exit(HIDDevice::usb_ctx); //needs to be called to end the
+        DeviceHandle = NULL;
         return false;
     }
+    */
     
     return true;
 }
@@ -741,7 +624,9 @@ void HIDDevice::HIDShutdown()
     
     if (DeviceHandle >= 0) // Device may already have been closed if unplugged.
     {
-        closeDevice(false);
+    	libusb_release_interface(DeviceHandle, 0); //release the claimed interface
+    	libusb_close(DeviceHandle); //close the device we opened
+    	//libusb_exit(HIDDevice::usb_ctx); //needs to be called to end the
     }
     
     LogText("OVR::Linux::HIDDevice - HIDShutdown '%s'\n", DevDesc.Path.ToCStr());
@@ -754,10 +639,12 @@ void HIDDevice::closeDevice(bool wasUnplugged)
     OVR_ASSERT(DeviceHandle >= 0);
     
 
-    HIDManager->DevManager->pThread->RemoveSelectFd(this, DeviceHandle);
+  //  HIDManager->DevManager->pThread->RemoveSelectFd(this, DeviceHandle);
 
-    close(DeviceHandle);  // close the file handle
-    DeviceHandle = -1;
+	libusb_release_interface(DeviceHandle, 0); //release the claimed interface
+	libusb_close(DeviceHandle); //close the device we opened
+	//libusb_exit(HIDDevice::usb_ctx); //needs to be called to end the
+    DeviceHandle = NULL;
         
     LogText("OVR::Linux::HIDDevice - HID Device Closed '%s'\n", DevDesc.Path.ToCStr());
 }
@@ -766,9 +653,12 @@ void HIDDevice::closeDevice(bool wasUnplugged)
 void HIDDevice::closeDeviceOnIOError()
 {
     LogText("OVR::Linux::HIDDevice - Lost connection to '%s'\n", DevDesc.Path.ToCStr());
-    closeDevice(false);
+	libusb_release_interface(DeviceHandle, 0); //release the claimed interface
+	libusb_close(DeviceHandle); //close the device we opened
+	//libusb_exit(HIDDevice::usb_ctx); //needs to be called to end the
 }
 
+//http://stackoverflow.com/questions/30519625/remove-input-driver-bound-to-the-hid-interface/30661555#30661555
 //http://www.libusb.org/browser/libusb/libusb/os/linux_usbfs.c
 //http://www.libusb.org/browser/libusb/libusb/sync.c
 //http://stackoverflow.com/questions/30519625/remove-input-driver-bound-to-the-hid-interface/30661555#30661555
@@ -789,8 +679,18 @@ bool HIDDevice::SetFeatureReport(UByte* data, UInt32 length)
         length--;
     }
 
-    int r = ioctl(DeviceHandle, HIDIOCSFEATURE(length), data);
- //   int r = 1;
+	int r = libusb_control_transfer(
+			DeviceHandle,
+			CONTROL_REQUEST_TYPE_OUT ,
+			HID_SET_REPORT,
+			(HID_REPORT_TYPE_FEATURE<<8)|0x00,
+			INTERFACE_NUMBER,
+			data,
+			length,
+			TIMEOUT_MS);
+
+  //  int r = ioctl(DeviceHandle, HIDIOCSFEATURE(length), data);
+
 	return (r >= 0);
 }
 
@@ -800,8 +700,30 @@ bool HIDDevice::GetFeatureReport(UByte* data, UInt32 length)
     if (DeviceHandle < 0)
         return false;
 
- //   int r = usb_get_feature_report(usb_dev_handle, data, length);
-    int r = ioctl(DeviceHandle, HIDIOCGFEATURE(length), data);
+	int skipped_report_id = 0;
+	int report_number = data[0];
+
+	if (report_number == 0x0) {
+		/* Offset the return buffer by 1, so that the report ID
+		   will remain in byte 0. */
+		data++;
+		length--;
+		skipped_report_id = 1;
+	}
+
+	int r = libusb_control_transfer(
+		DeviceHandle,
+		LIBUSB_REQUEST_TYPE_CLASS|LIBUSB_RECIPIENT_INTERFACE|LIBUSB_ENDPOINT_IN,
+		0x01/*HID get_report*/,
+		0,
+		(3/*HID feature*/ << 8) | report_number,
+		(unsigned char *)data, length,
+		1000);
+
+//	if (skipped_report_id)
+//		res++;
+
+  //  int r = ioctl(DeviceHandle, HIDIOCGFEATURE(length), data);
 
 	if(r < 0)
 	{

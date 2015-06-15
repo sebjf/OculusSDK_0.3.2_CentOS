@@ -44,11 +44,6 @@ private:
     friend class HIDDeviceManager;
 
     static libusb_context* usb_ctx;
-    libusb_device_handle* usb_dev_handle;
-
-    void OpenUSB();
-    void CloseUSB();
-    int usb_get_feature_report(libusb_device_handle *dev, unsigned char *data, size_t length);
 
 public:
     HIDDevice(HIDDeviceManager* manager);
@@ -82,7 +77,7 @@ private:
 
     bool                    InMinimalMode;
     HIDDeviceManager*       HIDManager;
-    int                     DeviceHandle;     // file handle to the device
+    libusb_device_handle*   DeviceHandle;     // file handle to the device
     HIDDeviceDesc           DevDesc;
     
     enum { ReadBufferSize = 96 };

@@ -95,7 +95,7 @@ OBJECTS       = $(OBJPATH)/OVR_CAPI.o \
 		$(OBJPATH)/OVR_FileFILE.o \
 		$(OBJPATH)/OVR_Log.o \
 		$(OBJPATH)/OVR_Math.o \
-                $(OBJPATH)/OVR_Recording.o \
+        $(OBJPATH)/OVR_Recording.o \
 		$(OBJPATH)/OVR_RefCount.o \
 		$(OBJPATH)/OVR_Std.o \
 		$(OBJPATH)/OVR_String.o \
@@ -113,7 +113,8 @@ OBJECTS       = $(OBJPATH)/OVR_CAPI.o \
 		$(OBJPATH)/OVR_Linux_SensorDevice.o \
 		$(OBJPATH)/OVR_Linux_DeviceManager.o \
 		$(OBJPATH)/OVR_Linux_HMDDevice.o \
-                $(OBJPATH)/edid.o
+		$(OBJPATH)/hid.o \
+        $(OBJPATH)/edid.o
 
 ####### Rules
 
@@ -265,6 +266,9 @@ $(OBJPATH)/OVR_Linux_DeviceManager.o: $(LIBOVRPATH)/Src/OVR_Linux_DeviceManager.
 
 $(OBJPATH)/OVR_Linux_HMDDevice.o: $(LIBOVRPATH)/Src/OVR_Linux_HMDDevice.cpp 
 	$(CXXBUILD)OVR_Linux_HMDDevice.o $(LIBOVRPATH)/Src/OVR_Linux_HMDDevice.cpp
+	
+$(OBJPATH)/hid.o: $(LIBOVRPATH)/Src/hid.c 
+	$(CXXBUILD)hid.o $(LIBOVRPATH)/Src/hid.c
 
 $(OBJPATH)/tinyxml2.o: $(3RDPARTYPATH)/TinyXml/tinyxml2.cpp 
 	$(CXXBUILD)tinyxml2.o $(3RDPARTYPATH)/TinyXml/tinyxml2.cpp
