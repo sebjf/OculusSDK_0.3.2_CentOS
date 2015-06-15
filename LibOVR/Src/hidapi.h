@@ -383,6 +383,8 @@ extern "C" {
 		*/
 		HID_API_EXPORT const wchar_t* HID_API_CALL hid_error(hid_device *device);
 
+		void HID_API_EXPORT hid_get_poll_fds(hid_device *dev, int** dest, int* size);
+
 #ifdef __cplusplus
 }
 #endif

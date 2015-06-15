@@ -44,7 +44,7 @@
 #include <wchar.h>
 
 /* GNU / LibUSB */
-#include <libusb.h>
+#include <libusb-1.0/libusb.h>
 #ifndef __ANDROID__
 #include <iconv.h>
 #endif
@@ -182,7 +182,7 @@ static int return_data(hid_device *dev, unsigned char *data, size_t length);
 
 static hid_device *new_hid_device(void)
 {
-	hid_device *dev = calloc(1, sizeof(hid_device));
+	hid_device *dev = (hid_device*)calloc(1, sizeof(hid_device));
 	dev->blocking = 1;
 
 	pthread_mutex_init(&dev->mutex, NULL);
@@ -563,7 +563,7 @@ struct hid_device_info  HID_API_EXPORT *hid_enumerate(unsigned short vendor_id, 
 							struct hid_device_info *tmp;
 
 							/* VID/PID match. Create the record. */
-							tmp = calloc(1, sizeof(struct hid_device_info));
+							tmp = (hid_device_info*)calloc(1, sizeof(struct hid_device_info));
 							if (cur_dev) {
 								cur_dev->next = tmp;
 							}
@@ -731,13 +731,13 @@ hid_device * hid_open(unsigned short vendor_id, unsigned short product_id, const
 
 static void read_callback(struct libusb_transfer *transfer)
 {
-	hid_device *dev = transfer->user_data;
+	hid_device *dev = (hid_device*)transfer->user_data;
 	int res;
 
 	if (transfer->status == LIBUSB_TRANSFER_COMPLETED) {
 
-		struct input_report *rpt = malloc(sizeof(*rpt));
-		rpt->data = malloc(transfer->actual_length);
+		struct input_report *rpt = (input_report*)malloc(sizeof(*rpt));
+		rpt->data = (uint8_t*)malloc(transfer->actual_length);
 		memcpy(rpt->data, transfer->buffer, transfer->actual_length);
 		rpt->len = transfer->actual_length;
 		rpt->next = NULL;
@@ -798,12 +798,12 @@ static void read_callback(struct libusb_transfer *transfer)
 
 static void *read_thread(void *param)
 {
-	hid_device *dev = param;
+	hid_device *dev = (hid_device*)param;
 	unsigned char *buf;
 	const size_t length = dev->input_ep_max_packet_size;
 
 	/* Set up the transfer object. */
-	buf = malloc(length);
+	buf = (unsigned char*)malloc(length);
 	dev->transfer = libusb_alloc_transfer(0);
 	libusb_fill_interrupt_transfer(dev->transfer,
 		dev->device_handle,
@@ -1068,7 +1068,7 @@ static int return_data(hid_device *dev, unsigned char *data, size_t length)
 
 static void cleanup_mutex(void *param)
 {
-	hid_device *dev = param;
+	hid_device *dev = (hid_device*)param;
 	pthread_mutex_unlock(&dev->mutex);
 }
 
@@ -1299,6 +1299,22 @@ int HID_API_EXPORT_CALL hid_get_indexed_string(hid_device *dev, int string_index
 HID_API_EXPORT const wchar_t * HID_API_CALL  hid_error(hid_device *dev)
 {
 	return NULL;
+}
+
+void HID_API_EXPORT hid_get_poll_fds(hid_device *dev, int** dest, int* size)
+{
+	const libusb_pollfd** pollfds = libusb_get_pollfds(usb_context);
+
+	const libusb_pollfd* current = pollfds[0];
+	int i = 0;
+	while(current != NULL)
+	{
+		(*dest)[i] = current->fd;
+		i++;
+		current = pollfds[i];
+	}
+	(*size) = i;
+	return;
 }
 
 

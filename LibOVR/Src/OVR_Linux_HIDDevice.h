@@ -29,7 +29,7 @@ limitations under the License.
 #include "OVR_HIDDevice.h"
 #include "OVR_Linux_DeviceManager.h"
 #include <libudev.h>
-#include <libusb-1.0/libusb.h>
+#include "hidapi.h"
 
 namespace OVR { namespace Linux {
 
@@ -42,8 +42,6 @@ class HIDDevice : public OVR::HIDDevice, public DeviceManagerThread::Notifier
 {
 private:
     friend class HIDDeviceManager;
-
-    static libusb_context* usb_ctx;
 
 public:
     HIDDevice(HIDDeviceManager* manager);
@@ -77,7 +75,7 @@ private:
 
     bool                    InMinimalMode;
     HIDDeviceManager*       HIDManager;
-    libusb_device_handle*   DeviceHandle;     // file handle to the device
+    hid_device_*   			DeviceHandle;     // file handle to the device
     HIDDeviceDesc           DevDesc;
     
     enum { ReadBufferSize = 96 };
@@ -112,13 +110,9 @@ public:
     
 private:
     bool initializeManager();
-    bool initVendorProductVersion(udev_device* device, HIDDeviceDesc* pDevDesc);
-    bool getPath(udev_device* device, String* pPath);
-    bool getIntProperty(udev_device* device, const char* key, int32_t* pResult);
-    bool getStringProperty(udev_device* device,
-                           const char* propertyName,
-                           OVR::String* pResult);
-    bool getFullDesc(udev_device* device, HIDDeviceDesc* desc);
+    bool initVendorProductVersion(hid_device_info* device, HIDDeviceDesc* pDevDesc);
+    bool getPath(hid_device_info* device, String* pPath);
+    bool getFullDesc(hid_device_info* device, HIDDeviceDesc* desc);
     bool GetDescriptorFromPath(const char* dev_path, HIDDeviceDesc* desc);
     
     bool AddNotificationDevice(HIDDevice* device);

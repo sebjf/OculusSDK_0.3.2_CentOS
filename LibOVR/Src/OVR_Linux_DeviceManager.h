@@ -110,6 +110,7 @@ private:
 
     Array<struct pollfd>    PollFds;
     Array<Notifier*>        FdNotifiers;
+    Array<Notifier*>		OtherNotifiers;
 
     Event                   StartupEvent;
 

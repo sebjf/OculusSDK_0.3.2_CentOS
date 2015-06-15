@@ -151,6 +151,12 @@ DeviceManagerThread::~DeviceManagerThread()
 
 bool DeviceManagerThread::AddSelectFd(Notifier* notify, int fd)
 {
+	if(fd < 0)
+	{
+		OtherNotifiers.PushBack(notify);
+		return true;
+	}
+
     struct pollfd pfd;
     pfd.fd = fd;
     pfd.events = POLLIN|POLLHUP|POLLERR;
@@ -165,6 +171,18 @@ bool DeviceManagerThread::AddSelectFd(Notifier* notify, int fd)
 
 bool DeviceManagerThread::RemoveSelectFd(Notifier* notify, int fd)
 {
+	if(fd < 0)
+	{
+		for (UPInt i = 0; i < OtherNotifiers.GetSize(); i++)
+		{
+			if ((OtherNotifiers[i] == notify))
+			{
+				OtherNotifiers.RemoveAt(i);
+				return true;
+			}
+		}
+	}
+
     // [0] is reserved for thread commands with notify of null, but we still
     // can use this function to remove it.
     for (UPInt i = 0; i < FdNotifiers.GetSize(); i++)
@@ -205,6 +223,11 @@ int DeviceManagerThread::Run()
             {
                 int waitMs = -1;
 
+                for(int i = 0; i < OtherNotifiers.GetSize(); i++)
+                {
+                	OtherNotifiers[i]->OnEvent(0,0);
+                }
+
                 // If devices have time-dependent logic registered, get the longest wait
                 // allowed based on current ticks.
                 if (!TicksNotifiers.IsEmpty())
@@ -222,6 +245,7 @@ int DeviceManagerThread::Run()
 
                 // wait until there is data available on one of the devices or the timeout expires
                 int n = poll(&PollFds[0], PollFds.GetSize(), waitMs);
+              //  int n = 0;
 
                 if (n > 0)
                 {
