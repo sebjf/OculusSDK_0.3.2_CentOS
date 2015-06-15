@@ -244,7 +244,7 @@ int DeviceManagerThread::Run()
                 }
 
                 // wait until there is data available on one of the devices or the timeout expires
-                int n = poll(&PollFds[0], PollFds.GetSize(), waitMs);
+                int n = poll(&PollFds[0], PollFds.GetSize(), 0);
               //  int n = 0;
 
                 if (n > 0)
