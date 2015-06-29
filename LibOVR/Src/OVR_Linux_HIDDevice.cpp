@@ -447,6 +447,13 @@ bool HIDDevice::openDevice(const char* device_path)
     }
 
     DeviceHandle = hid_open_path(device_path);
+
+    if(!DeviceHandle)
+    {
+    	LogError("Could not open %s error: %s", device_path, strerror(errno));
+    	return false;
+    }
+
     hid_set_nonblocking(DeviceHandle,0);
 
     HIDManager->DevManager->pThread->AddSelectFd(this, -1); //set this up to be polled

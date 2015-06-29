@@ -1,2 +1,3 @@
 # Oculus HID Sensor naming and permissioning
 KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="2833", MODE="0666"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="2833", MODE="0666"
