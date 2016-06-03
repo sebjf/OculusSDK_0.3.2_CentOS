@@ -244,6 +244,7 @@ public:
         FrameSizeInBytes = sizeInBytes;
     }
 
+    UInt32*  CameraHandle;			// Identifies the camera object associated with this frame
     UInt32   FrameNumber;			// an index of the frame
     double   ArrivalTimeSeconds;    // frame time in seconds, as recorded by the host computer
     const UByte* pFrameData;		// a ptr to frame data. 
@@ -252,7 +253,6 @@ public:
     UInt32   Format;				// format of pixel, see CameraDevice::PixelFormat enum
     UInt32   LostFrames;			// number of lost frames before this frame
 	String	  DeviceIdentifier;		// identifies the device sensing the message
-    UInt32* CameraHandle;			// Identifies the camera object associated with this frame
 };
 
 // Sent when a new camera is connected
